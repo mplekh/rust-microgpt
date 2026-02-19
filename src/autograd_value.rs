@@ -103,13 +103,15 @@ pub fn relu(a: &V) -> V {
 
 pub fn backward(root: &V) {
     let mut topo = vec![];
-    let mut visited = HashSet::new();
+    // Use the pointer to the RefCell as the unique identifier
+    let mut visited: HashSet<*const RefCell<Value>> = HashSet::new();
 
-    fn build(v: &V, topo: &mut Vec<V>, visited: &mut HashSet<usize>) {
-        let addr = Rc::as_ptr(v) as usize;
-        if !visited.contains(&addr) {
-            visited.insert(addr);
-            for c in &v.borrow().children {
+    fn build(v: &V, topo: &mut Vec<V>, visited: &mut HashSet<*const RefCell<Value>>) {
+        let ptr = Rc::as_ptr(v);
+        if !visited.contains(&ptr) {
+            visited.insert(ptr);
+            // We only need to borrow to get the children
+            for c in v.borrow().children.iter() {
                 build(c, topo, visited);
             }
             topo.push(v.clone());
@@ -118,14 +120,94 @@ pub fn backward(root: &V) {
 
     build(root, &mut topo, &mut visited);
 
+    // Seed the gradient
     root.borrow_mut().grad = 1.0;
 
+    // Process in reverse topological order
     for v in topo.into_iter().rev() {
-        let grad = v.borrow().grad;
-        let children = v.borrow().children.clone();
-        let locals = v.borrow().local_grads.clone();
-        for (c, lg) in children.iter().zip(locals.iter()) {
-            c.borrow_mut().grad += lg * grad;
+        let v_borrow = v.borrow();
+        let grad = v_borrow.grad;
+
+        for (child, local_grad) in v_borrow.children.iter().zip(v_borrow.local_grads.iter()) {
+            child.borrow_mut().grad += local_grad * grad;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_math() {
+        // z = (a * b) + c
+        let a = val(2.0);
+        let b = val(-3.0);
+        let c = val(10.0);
+
+        let ab = mul(&a, &b);
+        let z = add(&ab, &c);
+
+        assert_eq!(z.borrow().data, 4.0);
+
+        backward(&z);
+
+        // dz/da = b = -3
+        assert_eq!(a.borrow().grad, -3.0);
+        // dz/db = a = 2
+        assert_eq!(b.borrow().grad, 2.0);
+        // dz/dc = 1
+        assert_eq!(c.borrow().grad, 1.0);
+    }
+
+    // The "Diamond Problem" is the most common bug in custom autograd engines.
+    // It happens when a node has multiple parents in the computational graph.
+    #[test]
+    fn test_diamond_problem() {
+        // Testing gradient accumulation:
+        // x = 3
+        // y = x + x  (dy/dx should be 2)
+        let x = val(3.0);
+        let y = add(&x, &x);
+
+        backward(&y);
+
+        assert_eq!(y.borrow().data, 6.0);
+        assert_eq!(x.borrow().grad, 2.0); // 1.0 + 1.0
+    }
+
+    #[test]
+    fn test_complex_expression() {
+        // f(a, b) = (a * b) + a^2
+        // df/da = b + 2a
+        let a = val(2.0);
+        let b = val(5.0);
+
+        let a_sq = pow(&a, 2.0);
+        let ab = mul(&a, &b);
+        let f = add(&ab, &a_sq);
+
+        backward(&f);
+
+        assert_eq!(f.borrow().data, 14.0);
+        // df/da = 5 + 2(2) = 9
+        assert_eq!(a.borrow().grad, 9.0);
+        // df/db = a = 2
+        assert_eq!(b.borrow().grad, 2.0);
+    }
+
+    #[test]
+    fn test_nonlinear_relu() {
+        let x1 = val(0.5);
+        let x2 = val(-1.0);
+
+        let r1 = relu(&x1);
+        let r2 = relu(&x2);
+
+        backward(&r1);
+        backward(&r2);
+
+        assert_eq!(x1.borrow().grad, 1.0); // Grad exists for > 0
+        assert_eq!(x2.borrow().grad, 0.0); // Grad is 0 for < 0
     }
 }
