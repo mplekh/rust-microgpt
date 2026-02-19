@@ -12,8 +12,9 @@ pub type V = Rc<RefCell<Value>>;
 pub struct Value {
     pub data: f64,
     pub grad: f64,
-    children: Vec<V>,
-    local_grads: Vec<f64>,
+    children: [Option<V>; 2],
+    local_grads: [f64; 2],
+    arity: u8,
     visited: bool,
 }
 
@@ -21,8 +22,9 @@ pub fn val(data: f64) -> V {
     Rc::new(RefCell::new(Value {
         data,
         grad: 0.0,
-        children: vec![],
-        local_grads: vec![],
+        children: [None, None],
+        local_grads: [0.0, 0.0],
+        arity: 0,
         visited: false,
     }))
 }
@@ -31,8 +33,10 @@ pub fn add(a: &V, b: &V) -> V {
     let out = val(a.borrow().data + b.borrow().data);
     {
         let mut o = out.borrow_mut();
-        o.children = vec![a.clone(), b.clone()];
-        o.local_grads = vec![1.0, 1.0];
+        o.children[0] = Some(a.clone());
+        o.children[1] = Some(b.clone());
+        o.local_grads = [1.0, 1.0];
+        o.arity = 2;
     }
     out
 }
@@ -41,8 +45,10 @@ pub fn mul(a: &V, b: &V) -> V {
     let out = val(a.borrow().data * b.borrow().data);
     {
         let mut o = out.borrow_mut();
-        o.children = vec![a.clone(), b.clone()];
-        o.local_grads = vec![b.borrow().data, a.borrow().data];
+        o.children[0] = Some(a.clone());
+        o.children[1] = Some(b.clone());
+        o.local_grads = [b.borrow().data, a.borrow().data];
+        o.arity = 2;
     }
     out
 }
@@ -64,8 +70,9 @@ pub fn pow(a: &V, p: f64) -> V {
     let out = val(a.borrow().data.powf(p));
     {
         let mut o = out.borrow_mut();
-        o.children = vec![a.clone()];
-        o.local_grads = vec![p * a.borrow().data.powf(p - 1.0)];
+        o.children[0] = Some(a.clone());
+        o.local_grads = [p * a.borrow().data.powf(p - 1.0), 0.0];
+        o.arity = 1;
     }
     out
 }
@@ -75,8 +82,9 @@ pub fn exp(a: &V) -> V {
     let out = val(e);
     {
         let mut o = out.borrow_mut();
-        o.children = vec![a.clone()];
-        o.local_grads = vec![e];
+        o.children[0] = Some(a.clone());
+        o.local_grads = [e, 0.0];
+        o.arity = 1;
     }
     out
 }
@@ -85,8 +93,9 @@ pub fn log(a: &V) -> V {
     let out = val(a.borrow().data.ln());
     {
         let mut o = out.borrow_mut();
-        o.children = vec![a.clone()];
-        o.local_grads = vec![1.0 / a.borrow().data];
+        o.children[0] = Some(a.clone());
+        o.local_grads = [1.0 / a.borrow().data, 0.0];
+        o.arity = 1;
     }
     out
 }
@@ -96,8 +105,9 @@ pub fn relu(a: &V) -> V {
     let out = val(a.borrow().data.max(0.0));
     {
         let mut o = out.borrow_mut();
-        o.children = vec![a.clone()];
-        o.local_grads = vec![d];
+        o.children[0] = Some(a.clone());
+        o.local_grads = [d, 0.0];
+        o.arity = 1;
     }
     out
 }
@@ -112,8 +122,10 @@ pub fn backward(root: &V) {
 
         v.borrow_mut().visited = true;
 
-        for c in v.borrow().children.iter() {
-            build(c, topo);
+        let v_b = v.borrow();
+        for i in 0..v_b.arity as usize {
+            let child = v_b.children[i].as_ref().unwrap();
+            build(child, topo);
         }
 
         topo.push(v.clone());
@@ -129,8 +141,9 @@ pub fn backward(root: &V) {
         let v_borrow = v.borrow();
         let grad = v_borrow.grad;
 
-        for (child, local_grad) in v_borrow.children.iter().zip(v_borrow.local_grads.iter()) {
-            child.borrow_mut().grad += local_grad * grad;
+        for i in 0..v_borrow.arity as usize {
+            let child = v_borrow.children[i].as_ref().unwrap();
+            child.borrow_mut().grad += v_borrow.local_grads[i] * grad;
         }
     }
     for v in &topo {
