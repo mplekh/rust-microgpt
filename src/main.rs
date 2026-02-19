@@ -13,7 +13,6 @@ use crate::model_utils::*;
 
 use std::f64;
 use std::fs;
-use std::collections::HashSet;
 
 fn gpt(
     token_id: usize,
@@ -148,14 +147,9 @@ fn main() {
         docs.swap(i, j);
     }
 
-    let mut charset = HashSet::new();
-    for d in &docs {
-        for ch in d.chars() {
-            charset.insert(ch);
-        }
-    }
-    let mut uchars: Vec<char> = charset.into_iter().collect();
-    uchars.sort();
+    let mut uchars: Vec<char> = docs.iter().flat_map(|d| d.chars()).collect();
+    uchars.sort_unstable();
+    uchars.dedup();
 
     let bos = uchars.len();
     let vocab_size = uchars.len() + 1;
