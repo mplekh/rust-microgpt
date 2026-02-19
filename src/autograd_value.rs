@@ -4,7 +4,6 @@
 // -----------------------------
 
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::rc::Rc;
 
 pub type V = Rc<RefCell<Value>>;
@@ -15,6 +14,7 @@ pub struct Value {
     pub grad: f64,
     children: Vec<V>,
     local_grads: Vec<f64>,
+    visited: bool,
 }
 
 pub fn val(data: f64) -> V {
@@ -23,6 +23,7 @@ pub fn val(data: f64) -> V {
         grad: 0.0,
         children: vec![],
         local_grads: vec![],
+        visited: false,
     }))
 }
 
@@ -103,34 +104,37 @@ pub fn relu(a: &V) -> V {
 
 pub fn backward(root: &V) {
     let mut topo = vec![];
-    // Use the pointer to the RefCell as the unique identifier
-    let mut visited: HashSet<*const RefCell<Value>> = HashSet::new();
 
-    fn build(v: &V, topo: &mut Vec<V>, visited: &mut HashSet<*const RefCell<Value>>) {
-        let ptr = Rc::as_ptr(v);
-        if !visited.contains(&ptr) {
-            visited.insert(ptr);
-            // We only need to borrow to get the children
-            for c in v.borrow().children.iter() {
-                build(c, topo, visited);
-            }
-            topo.push(v.clone());
+    fn build(v: &V, topo: &mut Vec<V>) {
+        if v.borrow().visited {
+            return;
         }
+
+        v.borrow_mut().visited = true;
+
+        for c in v.borrow().children.iter() {
+            build(c, topo);
+        }
+
+        topo.push(v.clone());
     }
 
-    build(root, &mut topo, &mut visited);
+    build(root, &mut topo);
 
     // Seed the gradient
     root.borrow_mut().grad = 1.0;
 
     // Process in reverse topological order
-    for v in topo.into_iter().rev() {
+    for v in topo.clone().into_iter().rev() {
         let v_borrow = v.borrow();
         let grad = v_borrow.grad;
 
         for (child, local_grad) in v_borrow.children.iter().zip(v_borrow.local_grads.iter()) {
             child.borrow_mut().grad += local_grad * grad;
         }
+    }
+    for v in &topo {
+        v.borrow_mut().visited = false;
     }
 }
 
