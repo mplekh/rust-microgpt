@@ -3,151 +3,216 @@
 // "Micrograd-style" implementation of reverse-mode automatic differentiation
 // -----------------------------
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
-pub type V = Rc<RefCell<Value>>;
+pub type V = usize;
 
 #[derive(Clone)]
 pub struct Value {
     pub data: f64,
     pub grad: f64,
-    children: [Option<V>; 2],
+    children: [usize; 2],
     local_grads: [f64; 2],
     arity: u8,
-    visited: bool,
 }
 
-pub fn val(data: f64) -> V {
-    Rc::new(RefCell::new(Value {
+pub struct Tape {
+    pub nodes: Vec<Value>,
+}
+
+impl Tape {
+    pub fn new() -> Self {
+        Self { nodes: Vec::new() }
+    }
+
+    pub fn val(&mut self, data: f64) -> V {
+        let id = self.nodes.len();
+        self.nodes.push(Value {
+            data,
+            grad: 0.0,
+            children: [0, 0],
+            local_grads: [0.0, 0.0],
+            arity: 0,
+        });
+        id
+    }
+
+    pub fn zero_grad(&mut self) {
+        for node in &mut self.nodes {
+            node.grad = 0.0;
+        }
+    }
+}
+
+pub fn add(t: &mut Tape, a: V, b: V) -> V {
+    let data = t.nodes[a].data + t.nodes[b].data;
+
+    let id = t.nodes.len();
+    t.nodes.push(Value {
         data,
         grad: 0.0,
-        children: [None, None],
-        local_grads: [0.0, 0.0],
-        arity: 0,
-        visited: false,
-    }))
+        children: [a, b],
+        local_grads: [1.0, 1.0],
+        arity: 2,
+    });
+
+    id
 }
 
-pub fn add(a: &V, b: &V) -> V {
-    let out = val(a.borrow().data + b.borrow().data);
-    {
-        let mut o = out.borrow_mut();
-        o.children[0] = Some(a.clone());
-        o.children[1] = Some(b.clone());
-        o.local_grads = [1.0, 1.0];
-        o.arity = 2;
-    }
-    out
+pub fn mul(t: &mut Tape, a: V, b: V) -> V {
+    let data = t.nodes[a].data * t.nodes[b].data;
+
+    let id = t.nodes.len();
+    t.nodes.push(Value {
+        data,
+        grad: 0.0,
+        children: [a, b],
+        local_grads: [t.nodes[b].data, t.nodes[a].data],
+        arity: 2,
+    });
+
+    id
 }
 
-pub fn mul(a: &V, b: &V) -> V {
-    let out = val(a.borrow().data * b.borrow().data);
-    {
-        let mut o = out.borrow_mut();
-        o.children[0] = Some(a.clone());
-        o.children[1] = Some(b.clone());
-        o.local_grads = [b.borrow().data, a.borrow().data];
-        o.arity = 2;
-    }
-    out
+pub fn neg(t: &mut Tape, a: V) -> V {
+    let data = -t.nodes[a].data;
+
+    let id = t.nodes.len();
+    t.nodes.push(Value {
+        data,
+        grad: 0.0,
+        children: [a, usize::MAX],
+        local_grads: [-1.0, 0.0],
+        arity: 1,
+    });
+
+    id
 }
 
-pub fn neg(a: &V) -> V {
-    mul(a, &val(-1.0))
+pub fn sub(t: &mut Tape, a: V, b: V) -> V {
+    let data = t.nodes[a].data - t.nodes[b].data;
+
+    let id = t.nodes.len();
+    t.nodes.push(Value {
+        data,
+        grad: 0.0,
+        children: [a, b],
+        local_grads: [1.0, -1.0],
+        arity: 2,
+    });
+
+    id
 }
 
-pub fn sub(a: &V, b: &V) -> V {
-    add(a, &neg(b))
+pub fn div(t: &mut Tape, a: V, b: V) -> V {
+    let a_data = t.nodes[a].data;
+    let b_data = t.nodes[b].data;
+
+    let data = a_data / b_data;
+
+    let id = t.nodes.len();
+    t.nodes.push(Value {
+        data,
+        grad: 0.0,
+        children: [a, b],
+        local_grads: [1.0 / b_data, -a_data / (b_data * b_data)],
+        arity: 2,
+    });
+
+    id
 }
 
-pub fn div(a: &V, b: &V) -> V {
-    let inv = pow(b, -1.0);
-    mul(a, &inv)
+pub fn mul_const(t: &mut Tape, a: V, c: f64) -> V {
+    let data = t.nodes[a].data * c;
+
+    let id = t.nodes.len();
+    t.nodes.push(Value {
+        data,
+        grad: 0.0,
+        children: [a, usize::MAX],
+        local_grads: [c, 0.0],
+        arity: 1,
+    });
+
+    id
 }
 
-pub fn pow(a: &V, p: f64) -> V {
-    let out = val(a.borrow().data.powf(p));
-    {
-        let mut o = out.borrow_mut();
-        o.children[0] = Some(a.clone());
-        o.local_grads = [p * a.borrow().data.powf(p - 1.0), 0.0];
-        o.arity = 1;
-    }
-    out
+pub fn pow(t: &mut Tape, a: V, p: f64) -> V {
+    let a_data = t.nodes[a].data;
+    let data = a_data.powf(p);
+
+    let id = t.nodes.len();
+    t.nodes.push(Value {
+        data,
+        grad: 0.0,
+        children: [a, usize::MAX],
+        local_grads: [p * a_data.powf(p - 1.0), 0.0],
+        arity: 1,
+    });
+
+    id
 }
 
-pub fn exp(a: &V) -> V {
-    let e = a.borrow().data.exp();
-    let out = val(e);
-    {
-        let mut o = out.borrow_mut();
-        o.children[0] = Some(a.clone());
-        o.local_grads = [e, 0.0];
-        o.arity = 1;
-    }
-    out
+pub fn exp(t: &mut Tape, a: V) -> V {
+    let e = t.nodes[a].data.exp();
+
+    let id = t.nodes.len();
+    t.nodes.push(Value {
+        data: e,
+        grad: 0.0,
+        children: [a, usize::MAX],
+        local_grads: [e, 0.0],
+        arity: 1,
+    });
+
+    id
 }
 
-pub fn log(a: &V) -> V {
-    let out = val(a.borrow().data.ln());
-    {
-        let mut o = out.borrow_mut();
-        o.children[0] = Some(a.clone());
-        o.local_grads = [1.0 / a.borrow().data, 0.0];
-        o.arity = 1;
-    }
-    out
+pub fn log(t: &mut Tape, a: V) -> V {
+    let a_data = t.nodes[a].data;
+    let data = a_data.ln();
+
+    let id = t.nodes.len();
+    t.nodes.push(Value {
+        data,
+        grad: 0.0,
+        children: [a, usize::MAX],
+        local_grads: [1.0 / a_data, 0.0],
+        arity: 1,
+    });
+
+    id
 }
 
-pub fn relu(a: &V) -> V {
-    let d = if a.borrow().data > 0.0 { 1.0 } else { 0.0 };
-    let out = val(a.borrow().data.max(0.0));
-    {
-        let mut o = out.borrow_mut();
-        o.children[0] = Some(a.clone());
-        o.local_grads = [d, 0.0];
-        o.arity = 1;
-    }
-    out
+pub fn relu(t: &mut Tape, a: V) -> V {
+    let x = t.nodes[a].data;
+    let d = if x > 0.0 { 1.0 } else { 0.0 };
+
+    let id = t.nodes.len();
+    t.nodes.push(Value {
+        data: x.max(0.0),
+        grad: 0.0,
+        children: [a, usize::MAX],
+        local_grads: [d, 0.0],
+        arity: 1,
+    });
+
+    id
 }
 
-pub fn backward(root: &V) {
-    let mut topo = vec![];
+pub fn backward(t: &mut Tape, root: V) {
+    t.nodes[root].grad = 1.0;
 
-    fn build(v: &V, topo: &mut Vec<V>) {
-        if v.borrow().visited {
-            return;
+    // Because nodes are appended linearly, the reverse order
+    // is guaranteed to be a valid topological sort.
+    for i in (0..=root).rev() {
+        let grad = t.nodes[i].grad;
+        if grad == 0.0 { continue; } // skip nodes with no contribution
+
+        let arity = t.nodes[i].arity as usize;
+        for j in 0..arity {
+            let child = t.nodes[i].children[j];
+            let lg = t.nodes[i].local_grads[j];
+            t.nodes[child].grad += lg * grad;
         }
-
-        v.borrow_mut().visited = true;
-
-        let v_b = v.borrow();
-        for i in 0..v_b.arity as usize {
-            let child = v_b.children[i].as_ref().unwrap();
-            build(child, topo);
-        }
-
-        topo.push(v.clone());
-    }
-
-    build(root, &mut topo);
-
-    // Seed the gradient
-    root.borrow_mut().grad = 1.0;
-
-    // Process in reverse topological order
-    for v in topo.clone().into_iter().rev() {
-        let v_borrow = v.borrow();
-        let grad = v_borrow.grad;
-
-        for i in 0..v_borrow.arity as usize {
-            let child = v_borrow.children[i].as_ref().unwrap();
-            child.borrow_mut().grad += v_borrow.local_grads[i] * grad;
-        }
-    }
-    for v in &topo {
-        v.borrow_mut().visited = false;
     }
 }
 
@@ -157,74 +222,76 @@ mod tests {
 
     #[test]
     fn test_simple_math() {
-        // z = (a * b) + c
-        let a = val(2.0);
-        let b = val(-3.0);
-        let c = val(10.0);
+        let mut t = Tape::new();
 
-        let ab = mul(&a, &b);
-        let z = add(&ab, &c);
+        let a = t.val(2.0);
+        let b = t.val(-3.0);
+        let c = t.val(10.0);
 
-        assert_eq!(z.borrow().data, 4.0);
+        let ab = mul(&mut t, a, b);
+        let z = add(&mut t, ab, c);
 
-        backward(&z);
+        assert_eq!(t.nodes[z].data, 4.0);
 
-        // dz/da = b = -3
-        assert_eq!(a.borrow().grad, -3.0);
-        // dz/db = a = 2
-        assert_eq!(b.borrow().grad, 2.0);
-        // dz/dc = 1
-        assert_eq!(c.borrow().grad, 1.0);
+        backward(&mut t, z);
+
+        assert_eq!(t.nodes[a].grad, -3.0);
+        assert_eq!(t.nodes[b].grad, 2.0);
+        assert_eq!(t.nodes[c].grad, 1.0);
     }
 
-    // The "Diamond Problem" is the most common bug in custom autograd engines.
-    // It happens when a node has multiple parents in the computational graph.
     #[test]
     fn test_diamond_problem() {
-        // Testing gradient accumulation:
-        // x = 3
-        // y = x + x  (dy/dx should be 2)
-        let x = val(3.0);
-        let y = add(&x, &x);
+        let mut t = Tape::new();
 
-        backward(&y);
+        let x = t.val(3.0);
+        let y = add(&mut t, x, x);
 
-        assert_eq!(y.borrow().data, 6.0);
-        assert_eq!(x.borrow().grad, 2.0); // 1.0 + 1.0
+        backward(&mut t, y);
+
+        assert_eq!(t.nodes[y].data, 6.0);
+        assert_eq!(t.nodes[x].grad, 2.0);
     }
 
     #[test]
     fn test_complex_expression() {
-        // f(a, b) = (a * b) + a^2
-        // df/da = b + 2a
-        let a = val(2.0);
-        let b = val(5.0);
+        let mut t = Tape::new();
 
-        let a_sq = pow(&a, 2.0);
-        let ab = mul(&a, &b);
-        let f = add(&ab, &a_sq);
+        let a = t.val(2.0);
+        let b = t.val(5.0);
 
-        backward(&f);
+        let a_sq = pow(&mut t, a, 2.0);
+        let ab = mul(&mut t, a, b);
+        let f = add(&mut t, ab, a_sq);
 
-        assert_eq!(f.borrow().data, 14.0);
-        // df/da = 5 + 2(2) = 9
-        assert_eq!(a.borrow().grad, 9.0);
-        // df/db = a = 2
-        assert_eq!(b.borrow().grad, 2.0);
+        backward(&mut t, f);
+
+        assert_eq!(t.nodes[f].data, 14.0);
+        assert_eq!(t.nodes[a].grad, 9.0);
+        assert_eq!(t.nodes[b].grad, 2.0);
     }
 
     #[test]
     fn test_nonlinear_relu() {
-        let x1 = val(0.5);
-        let x2 = val(-1.0);
+        let mut t = Tape::new();
 
-        let r1 = relu(&x1);
-        let r2 = relu(&x2);
+        let x1 = t.val(0.5);
+        let x2 = t.val(-1.0);
 
-        backward(&r1);
-        backward(&r2);
+        let r1 = relu(&mut t, x1);
+        let r2 = relu(&mut t, x2);
 
-        assert_eq!(x1.borrow().grad, 1.0); // Grad exists for > 0
-        assert_eq!(x2.borrow().grad, 0.0); // Grad is 0 for < 0
+        // Combine them into a single output so one backward call handles both
+        let total = add(&mut t, r1, r2);
+
+        backward(&mut t, total);
+
+        assert_eq!(t.nodes[x1].grad, 1.0); // relu(0.5) -> grad 1.0
+        assert_eq!(t.nodes[x2].grad, 0.0); // relu(-1.0) -> grad 0.0
+
+        // Test resetting
+        t.zero_grad();
+        assert_eq!(t.nodes[x1].grad, 0.0);
     }
+
 }
