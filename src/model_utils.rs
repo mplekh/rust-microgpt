@@ -24,7 +24,7 @@ pub fn softmax(t: &mut Tape, logits: &[V]) -> Vec<V> {
     // 1. Find max value (numerical stability)
     let max_data = logits
         .iter()
-        .map(|&v| t.nodes[v].data)
+        .map(|&v| t.data[v])
         .fold(f64::NEG_INFINITY, f64::max);
 
     let max_val = t.val(max_data);
@@ -77,6 +77,6 @@ fn test_rmsnorm() {
     let output_node = norm[2]; // Let's check the last element
     backward(&mut t, output_node);
 
-    assert!(t.nodes[x[2]].grad != 0.0);
-    println!("RMSNorm value: {}", t.nodes[output_node].data);
+    assert!(t.grad[x[2]] != 0.0);
+    println!("RMSNorm value: {}", t.data[output_node]);
 }

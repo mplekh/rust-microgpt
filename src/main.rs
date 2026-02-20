@@ -172,7 +172,7 @@ fn main() {
     let mut v = vec![0.0; num_params];
 
     // Save the "Watermark" index where weights end and computation begins
-    let weights_end_idx = tape.nodes.len();
+    let weights_end_idx = tape.node_count();
 
     let lr = 0.01;
     let beta1 = 0.85;
@@ -226,7 +226,7 @@ fn main() {
 
         // Adam update and Reset
         for (i, &p_idx) in params.iter().enumerate() {
-            let g = tape.nodes[p_idx].grad;
+            let g = tape.grad[p_idx];
 
             m[i] = beta1 * m[i] + (1.0 - beta1) * g;
             v[i] = beta2 * v[i] + (1.0 - beta2) * g * g;
@@ -234,14 +234,14 @@ fn main() {
             let m_hat = m[i] / (1.0 - beta1.powi((step + 1) as i32));
             let v_hat = v[i] / (1.0 - beta2.powi((step + 1) as i32));
 
-            tape.nodes[p_idx].data -= lr * m_hat / (v_hat.sqrt() + eps);
+            tape.data[p_idx] -= lr * m_hat / (v_hat.sqrt() + eps);
         }
 
-        let loss_f64 = tape.nodes[total_loss_idx].data;
+        let loss_f64 = tape.data[total_loss_idx];
         print!("step {:4} | loss {:.4}\r", step + 1, loss_f64);
 
         // Clear the tape of computation nodes, keep weights
-        tape.nodes.truncate(weights_end_idx);
+        tape.truncate(weights_end_idx);
         tape.zero_grad(); // Reset weights' grads for next step
     }
 
@@ -289,7 +289,7 @@ fn main() {
             // 4. Extract data from the tape for sampling
             let weights: Vec<f64> = probs
                 .iter()
-                .map(|&p| tape.nodes[p].data)
+                .map(|&p| tape.data[p])
                 .collect();
 
             // 5. Weighted random sampling
@@ -309,7 +309,7 @@ fn main() {
             // --- TAPE CLEANUP ---
             // We are done with this token's computation graph.
             // Wipe everything after the parameters to keep memory constant.
-            tape.nodes.truncate(weights_end_idx);
+            tape.truncate(weights_end_idx);
 
             token_id = next_token;
             if token_id == bos {
