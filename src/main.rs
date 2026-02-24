@@ -84,6 +84,7 @@ fn gpt(
     }
 
     x = linear(t, &x_attn, attn_wo);
+
     x = x.iter().zip(&x_residual_attn).map(|(&a, &b)| add(t, a, b)).collect();
 
     // --- MLP block ---
@@ -172,9 +173,9 @@ fn main() {
     let mut v = vec![0.0; num_params];
 
     // Save the "Watermark" index where weights end and computation begins
-    let weights_end_idx = tape.nodes.len();
+    let weights_end_idx = tape.node_count();
 
-    let lr = 0.01;
+    let learning_rate = 0.01;
     let beta1 = 0.85;
     let beta2 = 0.99;
     let eps = 1e-8;
@@ -215,18 +216,11 @@ fn main() {
         let total_loss_idx = div(&mut tape, sum_loss_idx, n_val);
 
         backward(&mut tape, total_loss_idx);
-        /*
-        let grad_sum: f64 = params
-            .iter()
-            .map(|&id| tape.nodes[id].grad.abs())
-            .sum();
-
-        println!("grad_sum={}", grad_sum);
-        */
 
         // Adam update and Reset
+        let lr_t = learning_rate * (1.0 - step as f64 / num_steps as f64);
         for (i, &p_idx) in params.iter().enumerate() {
-            let g = tape.nodes[p_idx].grad;
+            let g = tape.grad[p_idx];
 
             m[i] = beta1 * m[i] + (1.0 - beta1) * g;
             v[i] = beta2 * v[i] + (1.0 - beta2) * g * g;
@@ -234,14 +228,14 @@ fn main() {
             let m_hat = m[i] / (1.0 - beta1.powi((step + 1) as i32));
             let v_hat = v[i] / (1.0 - beta2.powi((step + 1) as i32));
 
-            tape.nodes[p_idx].data -= lr * m_hat / (v_hat.sqrt() + eps);
+            tape.data[p_idx] -= lr_t * m_hat / (v_hat.sqrt() + eps);
         }
 
-        let loss_f64 = tape.nodes[total_loss_idx].data;
+        let loss_f64 = tape.data[total_loss_idx];
         print!("step {:4} | loss {:.4}\r", step + 1, loss_f64);
 
         // Clear the tape of computation nodes, keep weights
-        tape.nodes.truncate(weights_end_idx);
+        tape.truncate(weights_end_idx);
         tape.zero_grad(); // Reset weights' grads for next step
     }
 
@@ -262,8 +256,8 @@ fn main() {
         let mut token_id = bos;
         let mut sample = String::new();
 
+        tape.truncate(weights_end_idx);
         for pos_id in 0..block_size {
-            // 1. Forward pass through GPT
             let logits = gpt(
                 &mut tape,
                 token_id,
@@ -276,23 +270,19 @@ fn main() {
                 n_head, head_dim,
             );
 
-            // 2. Temperature scaling
             let temp_val = tape.val(temperature);
             let scaled: Vec<V> = logits
                 .iter()
                 .map(|&l| div(&mut tape, l, temp_val))
                 .collect();
 
-            // 3. Softmax to get probabilities
             let probs = softmax(&mut tape, &scaled);
 
-            // 4. Extract data from the tape for sampling
             let weights: Vec<f64> = probs
                 .iter()
-                .map(|&p| tape.nodes[p].data)
+                .map(|&p| tape.data[p])
                 .collect();
 
-            // 5. Weighted random sampling
             let mut cumulative = 0.0;
             let r = rng.uniform();
             let mut next_token = 0;
@@ -305,11 +295,6 @@ fn main() {
                     break;
                 }
             }
-
-            // --- TAPE CLEANUP ---
-            // We are done with this token's computation graph.
-            // Wipe everything after the parameters to keep memory constant.
-            tape.nodes.truncate(weights_end_idx);
 
             token_id = next_token;
             if token_id == bos {

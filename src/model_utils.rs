@@ -21,15 +21,13 @@ pub fn linear(t: &mut Tape, x: &[V], w: &Vec<Vec<V>>) -> Vec<V> {
 }
 
 pub fn softmax(t: &mut Tape, logits: &[V]) -> Vec<V> {
-    // 1. Find max value (numerical stability)
     let max_data = logits
         .iter()
-        .map(|&v| t.nodes[v].data)
+        .map(|&v| t.data[v])
         .fold(f64::NEG_INFINITY, f64::max);
-
     let max_val = t.val(max_data);
 
-    // 2. Compute exp(x - max)
+    // Compute exp(x - max)
     let exps: Vec<V> = logits
         .iter()
         .map(|&v| {
@@ -38,14 +36,13 @@ pub fn softmax(t: &mut Tape, logits: &[V]) -> Vec<V> {
         })
         .collect();
 
-    // 3. Sum of exps
     let sum_exp = exps
         .iter()
         .copied()
         .reduce(|acc, e| add(t, acc, e))
         .unwrap_or_else(|| t.val(1e-9)); // Prevent div by zero
 
-    // 4. Normalize
+    // Normalize
     exps.into_iter().map(|e| div(t, e, sum_exp)).collect()
 }
 
@@ -77,6 +74,6 @@ fn test_rmsnorm() {
     let output_node = norm[2]; // Let's check the last element
     backward(&mut t, output_node);
 
-    assert!(t.nodes[x[2]].grad != 0.0);
-    println!("RMSNorm value: {}", t.nodes[output_node].data);
+    assert!(t.grad[x[2]] != 0.0);
+    println!("RMSNorm value: {}", t.data[output_node]);
 }
