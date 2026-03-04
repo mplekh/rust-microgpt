@@ -20,4 +20,4 @@ codegen-units = 1
 panic = "abort"
 
 # Enable debug symbols even in release if you want to profile with tools like `perf` or `samply`
-# debug = true
+debug = true

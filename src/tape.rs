@@ -34,16 +34,23 @@ pub enum Op {
     Add,
     Mul,
     Div,
+    MulAdd,
+}
+
+#[derive(Clone)]
+struct Children {
+    a: u32,
+    b: u32,
+    c: u32
 }
 
 pub struct Tape {
     pub data: Vec<DataT>,
     pub grad: Vec<GradT>,
-    pub i_child0: Vec<usize>,
-    pub i_child1: Vec<usize>,
-    pub op: Vec<Op>,
-    pub size: usize,
-    pub cap: usize,
+    child: Vec<Children>,
+    op: Vec<Op>,
+    size: usize,
+    cap: usize,
 }
 
 impl Tape {
@@ -51,8 +58,7 @@ pub fn new(n: usize) -> Self {
         Self {
             data: vec![0.0; n],
             grad: vec![0.0; n],
-            i_child0: vec![0; n],
-            i_child1: vec![0; n],
+            child: vec![Children{a: 0, b: 0, c: 0}; n],
             op: vec![Op::Const; n],
             size: 0,
             cap: n,
@@ -60,15 +66,18 @@ pub fn new(n: usize) -> Self {
     }
 
     #[inline(always)]
+    fn grow(&mut self, new_cap: usize) {
+        self.data.resize(new_cap, 0.0);
+        self.grad.resize(new_cap, 0.0);
+        self.child.resize(new_cap, Children{a: 0, b: 0, c: 0});
+        self.op.resize(new_cap, Op::Const);
+        self.cap = new_cap;
+    }
+
+    #[inline(always)]
     fn ensure(&mut self) {
         if self.size >= self.cap {
-            let new_cap = self.cap * 2;
-            self.data.resize(new_cap, 0.0);
-            self.grad.resize(new_cap, 0.0);
-            self.i_child0.resize(new_cap, 0);
-            self.i_child1.resize(new_cap, 0);
-            self.op.resize(new_cap, Op::Const);
-            self.cap = new_cap;
+            self.grow(self.cap * 2);
         }
     }
 
@@ -93,7 +102,7 @@ pub fn new(n: usize) -> Self {
         self.ensure();
         let i = self.size;
         self.data[i] = self.data[a].max(0.0);
-        self.i_child0[i] = a;
+        self.child[i].a = a as u32;
         self.op[i] = Op::Relu;
         self.size += 1;
         i
@@ -104,7 +113,7 @@ pub fn new(n: usize) -> Self {
         self.ensure();
         let i = self.size;
         self.data[i] = -self.data[a].ln();
-        self.i_child0[i] = a;
+        self.child[i].a = a as u32;
         self.op[i] = Op::InvLog;
         self.size += 1;
         i
@@ -116,7 +125,7 @@ pub fn new(n: usize) -> Self {
         let i = self.size;
         let val = (self.data[a] + 1e-5).powf(-0.5);
         self.data[i] = val;
-        self.i_child0[i] = a;
+        self.child[i].a = a as u32;
         self.op[i] = Op::InvSqrt;
         self.size += 1;
         i
@@ -128,7 +137,7 @@ pub fn new(n: usize) -> Self {
         let i = self.size;
         let val = self.data[a].exp();
         self.data[i] = val;
-        self.i_child0[i] = a;
+        self.child[i].a = a as u32;
         self.op[i] = Op::Exp;
         self.size += 1;
         i
@@ -139,7 +148,7 @@ pub fn new(n: usize) -> Self {
         self.ensure();
         let i = self.size;
         self.data[i] = self.data[a] - c;
-        self.i_child0[i] = a;
+        self.child[i].a = a as u32;
         self.op[i] = Op::SubConst;
         self.size += 1;
         i
@@ -150,8 +159,8 @@ pub fn new(n: usize) -> Self {
         self.ensure();
         let i = self.size;
         self.data[i] = self.data[a] + self.data[b];
-        self.i_child0[i] = a;
-        self.i_child1[i] = b;
+        self.child[i].a = a as u32;
+        self.child[i].b = b as u32;
         self.op[i] = Op::Add;
         self.size += 1;
         i
@@ -161,10 +170,16 @@ pub fn new(n: usize) -> Self {
     pub fn mul(&mut self, a: usize, b: usize) -> usize {
         self.ensure();
         let i = self.size;
-        self.data[i] = self.data[a] * self.data[b];
-        self.i_child0[i] = a;
-        self.i_child1[i] = b;
-        self.op[i] = Op::Mul;
+        unsafe {
+            let base_data = self.data.as_mut_ptr();
+            let base_op = self.op.as_mut_ptr();
+            let base_c = self.child.as_mut_ptr();
+            let va = *base_data.add(a);
+            let vb = *base_data.add(b);
+            *base_data.add(i) = va * vb;
+            *base_op.add(i) = Op::Mul;
+            *base_c.add(i) = Children{a: a as u32, b: b as u32, c: 0u32};
+        }
         self.size += 1;
         i
     }
@@ -180,8 +195,8 @@ pub fn new(n: usize) -> Self {
         self.ensure();
         let i = self.size;
         self.data[i] = self.data[a] / self.data[b];
-        self.i_child0[i] = a;
-        self.i_child1[i] = b;
+        self.child[i].a = a as u32;
+        self.child[i].b = b as u32;
         self.op[i] = Op::Div;
         self.size += 1;
         i
@@ -195,17 +210,20 @@ pub fn new(n: usize) -> Self {
 
     #[inline(always)]
     pub fn mul_add(&mut self, a: usize, b: usize, c: usize) -> usize {
-        let i1 = self.size;
-        let i2 = i1 + 1;
-        self.size += 2;
-        self.ensure(); // Ensure space for 2 nodes
+        self.ensure();
+        self.mul_add_internal(a, b, c)
+    }
+
+    #[inline(always)]
+    fn mul_add_internal(&mut self, a: usize, b: usize, c: usize) -> usize {
+        let i = self.size;
+        self.size += 1;
 
         // Using raw pointers for maximum speed in the hot loop
         unsafe {
             let base_data = self.data.as_mut_ptr();
             let base_op = self.op.as_mut_ptr();
-            let base_c0 = self.i_child0.as_mut_ptr();
-            let base_c1 = self.i_child1.as_mut_ptr();
+            let base_c = self.child.as_mut_ptr();
 
             // Fetch values from data pointer
             let va = *base_data.add(a);
@@ -213,18 +231,11 @@ pub fn new(n: usize) -> Self {
             let product = va * vb;
 
             // i1: The Multiplication Node
-            *base_data.add(i1) = product;
-            *base_op.add(i1) = Op::Mul;
-            *base_c0.add(i1) = a;
-            *base_c1.add(i1) = b;
-
-            // i2: The Addition Node
-            *base_data.add(i2) = product + *base_data.add(c);
-            *base_op.add(i2) = Op::Add;
-            *base_c0.add(i2) = c;
-            *base_c1.add(i2) = i1;
+            *base_data.add(i) = product + *base_data.add(c);
+            *base_op.add(i) = Op::MulAdd;
+            *base_c.add(i) = Children{a: a as u32, b: b as u32, c: c as u32};
         }
-        i2
+        i
     }
 
     pub fn softmax(&mut self, out: &mut [usize], logits: &[usize]) {
@@ -262,17 +273,20 @@ pub fn new(n: usize) -> Self {
     }
 
     pub fn linear(&mut self, out: &mut [usize], x: &[usize], w: &Matrix) {
+        if self.size + w.rows * w.cols * 2 >= self.cap {
+            self.grow(self.cap * 2);
+        }
         for i in 0..w.rows {
             let w_at_row_i = w.at(i, 0);
             let mut sum = self.mul(w_at_row_i, x[0]);
             for j in 1..w.cols {
-                sum = self.mul_add(w_at_row_i + j, x[j], sum);
+                sum = self.mul_add_internal(w_at_row_i + j, x[j], sum);
             }
             out[i] = sum;
         }
     }
 
-pub fn backward(&mut self, loss_idx: usize) {
+    pub fn backward(&mut self, loss_idx: usize) {
         // Equivalent to std::memset(grad, 0, n * sizeof(grad_T))
         unsafe {
             ptr::write_bytes(self.grad.as_mut_ptr(), 0, loss_idx + 1);
@@ -280,11 +294,10 @@ pub fn backward(&mut self, loss_idx: usize) {
         self.grad[loss_idx] = 1.0;
 
         // Using raw pointers for maximum speed in the hot loop
-        let p_data = self.data.as_ptr();
-        let p_grad = self.grad.as_mut_ptr();
-        let p_c0 = self.i_child0.as_ptr();
-        let p_c1 = self.i_child1.as_ptr();
         let p_op = self.op.as_ptr();
+        let p_grad = self.grad.as_mut_ptr();
+        let p_data = self.data.as_ptr();
+        let p_c = self.child.as_ptr();
 
         for i in (0..=loss_idx).rev() {
             unsafe {
@@ -294,39 +307,45 @@ pub fn backward(&mut self, loss_idx: usize) {
                 let g = *p_grad.add(i);
                 if g == 0.0 { continue; }
 
-                let c0 = *p_c0.add(i);
+                let a = (*p_c.add(i)).a as usize;
+                let b = (*p_c.add(i)).b as usize;
 
                 match op {
-                    Op::SubConst | Op::Add => {
-                        *p_grad.add(c0) += g;
-                        if op == Op::Add {
-                            *p_grad.add(*p_c1.add(i)) += g;
-                        }
+                    Op::SubConst => {
+                        *p_grad.add(a) += g;
+                    }
+                    Op::Add => {
+                        *p_grad.add(a) += g;
+                        *p_grad.add(b) += g;
                     }
                     Op::Relu => {
-                        if *p_data.add(c0) > 0.0 {
-                            *p_grad.add(c0) += g;
+                        if *p_data.add(a) > 0.0 {
+                            *p_grad.add(a) += g;
                         }
                     }
                     Op::InvLog => {
-                        *p_grad.add(c0) -= g / *p_data.add(c0);
+                        *p_grad.add(a) -= g / *p_data.add(a);
                     }
                     Op::InvSqrt => {
-                        *p_grad.add(c0) -= 0.5 * g * (*p_data.add(i)) / (*p_data.add(c0) + 1e-5);
+                        *p_grad.add(a) -= 0.5 * g * (*p_data.add(i)) / (*p_data.add(a) + 1e-5);
                     }
                     Op::Exp => {
-                        *p_grad.add(c0) += g * (*p_data.add(i));
+                        *p_grad.add(a) += g * (*p_data.add(i));
                     }
                     Op::Mul => {
-                        let c1 = *p_c1.add(i);
-                        *p_grad.add(c0) += g * (*p_data.add(c1));
-                        *p_grad.add(c1) += g * (*p_data.add(c0));
+                        *p_grad.add(a) += g * (*p_data.add(b));
+                        *p_grad.add(b) += g * (*p_data.add(a));
                     }
                     Op::Div => {
-                        let c1 = *p_c1.add(i);
-                        let d_c1 = *p_data.add(c1);
-                        *p_grad.add(c0) += g / d_c1;
-                        *p_grad.add(c1) -= g * (*p_data.add(c0)) / (d_c1 * d_c1);
+                        let d_c1 = *p_data.add(b);
+                        *p_grad.add(a) += g / d_c1;
+                        *p_grad.add(b) -= g * (*p_data.add(a)) / (d_c1 * d_c1);
+                    }
+                    Op::MulAdd => {
+                        let c = (*p_c.add(i)).c as usize;
+                        *p_grad.add(a) += g * (*p_data.add(b));
+                        *p_grad.add(b) += g * (*p_data.add(a));
+                        *p_grad.add(c) += g;
                     }
                     _ => {}
                 }
