@@ -1,8 +1,6 @@
 use std::f32;
 use std::ptr;
 
-pub const MAX_VOCAB_SIZE: usize = 100;
-
 pub type DataT = f32;
 pub type GradT = f32;
 
@@ -244,19 +242,18 @@ pub fn new(n: usize) -> Self {
             if self.data[idx] > max_val { max_val = self.data[idx]; }
         }
 
-        let mut exps = [0usize; MAX_VOCAB_SIZE];
         for i in 0..logits.len() {
             let sub = self.sub_const(logits[i], max_val);
-            exps[i] = self.exp(sub);
+            out[i] = self.exp(sub);
         }
 
-        let mut sum_exponents = exps[0];
+        let mut sum_exponents = out[0];
         for i in 1..logits.len() {
-            sum_exponents = self.add(sum_exponents, exps[i]);
+            sum_exponents = self.add(sum_exponents, out[i]);
         }
 
         for i in 0..logits.len() {
-            out[i] = self.div(exps[i], sum_exponents);
+            out[i] = self.div(out[i], sum_exponents);
         }
     }
 

@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 4. Initialize Model and Optimizer State
-    let state_dict = Model::new(&mut tape, &mut rng, vocab_size, N_EMBD, BLOCK_SIZE, N_LAYER);
+    let model = Model::new(&mut tape, &mut rng, vocab_size, N_EMBD, BLOCK_SIZE, N_LAYER);
     let weights_end = tape.len();
     println!("Num params: {}", weights_end);
 
@@ -73,31 +73,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if tokens.len() > BLOCK_SIZE {
             tokens.truncate(BLOCK_SIZE);
         }
-        let num_tokens = tokens.len();
         tokens.push(bos);
 
-        // Forward Pass
-        let mut keys: KVCache = [[[0; N_EMBD]; BLOCK_SIZE]; N_LAYER];
-        let mut values: KVCache = [[[0; N_EMBD]; BLOCK_SIZE]; N_LAYER];
-        let mut losses = [0usize; BLOCK_SIZE];
-        for pos_id in 0..num_tokens {
-            let token_id = tokens[pos_id];
-            let target_id = tokens[pos_id + 1];
-            
-            let mut logits = [0usize; MAX_VOCAB_SIZE];
-            gpt(&mut tape, &mut logits, token_id, pos_id, &mut keys, &mut values, &state_dict);
-            
-            let mut probs = [0usize; MAX_VOCAB_SIZE];
-            tape.softmax(&mut probs, &logits[..vocab_size]);
-            
-            losses[pos_id] = tape.inv_log(probs[target_id]);
-        }
-
-        let mut total_losses = losses[0];
-        for i in 1..num_tokens {
-            total_losses = tape.add(total_losses, losses[i]);
-        }
-        let loss_idx = tape.mul_const(total_losses, 1.0 / (num_tokens as f32));
+        let loss_idx = model.forward(&mut tape, &tokens);
 
         // Backward Pass
         tape.backward(loss_idx);
@@ -143,7 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for pos_id in 0..BLOCK_SIZE {
             let mut logits_indices = [0usize; MAX_VOCAB_SIZE];
-            gpt(&mut tape, &mut logits_indices, token_id, pos_id, &mut keys, &mut values, &state_dict);
+            model.gpt(&mut tape, &mut logits_indices, token_id, pos_id, &mut keys, &mut values);
             
             // Apply temperature
             let mut temp_logits = [0usize; MAX_VOCAB_SIZE];
