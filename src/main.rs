@@ -11,11 +11,13 @@ use crate::mt19937_rng::PythonRandom;
 use crate::tape::*;
 use crate::model::*;
 
-use std::collections::BTreeSet;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-
 const NUM_STEPS: usize = 1000;
+
+fn encode(s: &str, charset: &[char]) -> Vec<usize> {
+    s.chars()
+        .map(|c| charset.iter().position(|x| *x == c).unwrap())
+        .collect()
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Initialize Tape and Random Number Generator
@@ -26,40 +28,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // 2. Load and Shuffle Documents
-    let file = File::open("input.txt")?;
-    let reader = BufReader::new(file);
-    let mut docs: Vec<String> = reader
-        .lines()
-        .filter_map(|l| l.ok())
-        .filter(|l| !l.is_empty())
-        .collect();
+    let text = std::fs::read_to_string("input.txt").unwrap();
+
+    let mut docs: Vec<&str> =
+        text.lines()
+            .filter(|l| !l.trim().is_empty())
+            .collect();
 
     rng.shuffle(&mut docs);
     println!("Num docs: {}", docs.len());
 
     // 3. Build Vocabulary
-    let mut uchars = BTreeSet::new();
-    for doc in &docs {
-        for c in doc.chars() {
-            uchars.insert(c);
-        }
-    }
-
-    let bos_idx = uchars.len();
-    let vocab_size = uchars.len() + 1;
+    let mut charset: Vec<char> = docs.join("").chars().collect();
+    charset.sort();
+    charset.dedup();
+    let bos = charset.len();
+    let vocab_size = bos + 1;
     println!("Vocab size: {}", vocab_size);
 
     if vocab_size > MAX_VOCAB_SIZE {
         panic!("vocab_size ({}) exceeds MAX_VOCAB_SIZE", vocab_size);
-    }
-
-    let idx_to_char: Vec<char> = uchars.iter().cloned().collect();
-
-    // Map char to index (for training/tokenization)
-    // Using a HashMap or BTreeMap handles Unicode range (0 to 0x10FFFF)
-    let mut char_to_idx = std::collections::HashMap::new();
-    for (idx, &c) in uchars.iter().enumerate() {
-        char_to_idx.insert(c, idx);
     }
 
     // 4. Initialize Model and Optimizer State
@@ -80,24 +68,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let doc = &docs[step % docs.len()];
         
         // Tokenizer: BOS + doc characters + BOS
-        let mut tokens = Vec::with_capacity(BLOCK_SIZE + 2);
-        tokens.push(bos_idx);
-        for ch in doc.chars() {
-            // .get() returns an Option, protecting against chars not in training set
-            if let Some(&idx) = char_to_idx.get(&ch) {
-                tokens.push(idx);
-            }
+        let mut tokens = vec![bos];
+        tokens.extend(encode(doc, &charset));
+        if tokens.len() > BLOCK_SIZE {
+            tokens.truncate(BLOCK_SIZE);
         }
-        tokens.push(bos_idx);
-
-        let n = (tokens.len() - 1).min(BLOCK_SIZE);
+        let num_tokens = tokens.len();
+        tokens.push(bos);
 
         // Forward Pass
         let mut keys: KVCache = [[[0; N_EMBD]; BLOCK_SIZE]; N_LAYER];
         let mut values: KVCache = [[[0; N_EMBD]; BLOCK_SIZE]; N_LAYER];
         let mut losses = [0usize; BLOCK_SIZE];
-
-        for pos_id in 0..n {
+        for pos_id in 0..num_tokens {
             let token_id = tokens[pos_id];
             let target_id = tokens[pos_id + 1];
             
@@ -111,10 +94,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let mut total_losses = losses[0];
-        for i in 1..n {
+        for i in 1..num_tokens {
             total_losses = tape.add(total_losses, losses[i]);
         }
-        let loss_idx = tape.mul_const(total_losses, 1.0 / (n as f32));
+        let loss_idx = tape.mul_const(total_losses, 1.0 / (num_tokens as f32));
 
         // Backward Pass
         tape.backward(loss_idx);
@@ -155,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for sample_idx in 0..20 {
         let mut keys: KVCache = [[[0; N_EMBD]; BLOCK_SIZE]; N_LAYER];
         let mut values: KVCache = [[[0; N_EMBD]; BLOCK_SIZE]; N_LAYER];
-        let mut token_id = bos_idx;
+        let mut token_id = bos;
         let mut samples = String::new();
 
         for pos_id in 0..BLOCK_SIZE {
@@ -178,10 +161,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             token_id = rng.choices(&weights[..vocab_size], 1)[0];
-            if token_id == bos_idx {
+            if token_id == bos {
                 break;
             }
-            samples.push(idx_to_char[token_id]);
+            samples.push(charset[token_id]);
         }
         
         println!("{}: {}", sample_idx, samples);

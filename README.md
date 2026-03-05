@@ -13,16 +13,6 @@ A high-performance "Tape" based reverse-mode automatic differentiation engine.
 It uses a pre-allocated memory arena and unsafe raw pointers to bypass Rust's
 bounds-checking overhead in the hot backpropagation loop, matching C++ performance.
 
-1. **Zero-Copy KV Caching**:
-Optimized inference using a fixed-size KVCache stack-allocated buffer,
-preventing heap allocations during token generation.
-
-1. **Unicode-Aware Tokenization**: A robust mapping system using HashMap and BTreeSet that handles
-complex UTF-8 scalars (like ś, ż, or –) without crashing or requiring massive sparse arrays.
-
-1. **Linear Algebra from Scratch**: Hand-rolled Matrix-Vector products, RMSNorm,
-and Softmax implementations optimized for the Rust compiler's auto-vectorization.
-
 1. **Deterministic Python-Style RNG**: A custom implementation of the Mersenne Twister (MT19937)
 that replicates Python’s random module exactly.
 
@@ -51,17 +41,17 @@ The model reads `input.txt`, creates a character-level vocabulary, and begins tr
 1. **Tape Initialization**: The model allocates a contiguous block of memory for the "Tape"
 - a graph of every operation performed during the forward pass.
 
-2. **Forward Pass**:
+1. **Forward Pass**:
     Embedding: Combines Token Embeddings (WTE) and Positional Embeddings (WPE).
 
     Attention: Computes Multi-Head Attention using a scaled dot-product.
 
     MLP: A two-layer feed-forward network with ReLU activation.
 
-3. **Backpropagation**: The backward function traverses the Tape in reverse,
+1. **Backpropagation**: The backward function traverses the Tape in reverse,
 using raw pointer arithmetic to update gradients efficiently.
 
-4. **Adam Optimizer**: Updates weights using first and second moment estimates (m and v)
+1. **Adam Optimizer**: Updates weights using first and second moment estimates (m and v)
 with a linear learning rate decay.
 
 After training, the model enters an inference loop and generates 20 new "hallucinated" strings based on the patterns it learned.
