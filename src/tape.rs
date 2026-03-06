@@ -298,15 +298,13 @@ pub fn new(n: usize) -> Self {
 
         for i in (0..=loss_idx).rev() {
             unsafe {
-                let op = *p_op.add(i);
-                if op == Op::Const { continue; }
-
                 let g = *p_grad.add(i);
                 if g == 0.0 { continue; }
 
                 let a = (*p_c.add(i)).a as usize;
                 let b = (*p_c.add(i)).b as usize;
 
+                let op = *p_op.add(i);
                 match op {
                     Op::SubConst => {
                         *p_grad.add(a) += g;
