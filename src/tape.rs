@@ -226,10 +226,10 @@ pub fn new(n: usize) -> Self {
             // Fetch values from data pointer
             let va = *base_data.add(a);
             let vb = *base_data.add(b);
-            let vc = *base_data.add(c);
+            let product = va * vb;
 
             // i1: The Multiplication Node
-            *base_data.add(i) = va.mul_add(vb, vc);
+            *base_data.add(i) = product + *base_data.add(c);
             *base_op.add(i) = Op::MulAdd;
             *base_c.add(i) = Children{a: a as u32, b: b as u32, c: c as u32};
         }
@@ -338,8 +338,8 @@ pub fn new(n: usize) -> Self {
                     }
                     Op::MulAdd => {
                         let c = (*p_c.add(i)).c as usize;
-                        *p_grad.add(a) = g.mul_add(*p_data.add(b), *p_grad.add(a));
-                        *p_grad.add(b) = g.mul_add(*p_data.add(a), *p_grad.add(b));
+                        *p_grad.add(a) += g * (*p_data.add(b));
+                        *p_grad.add(b) += g * (*p_data.add(a));
                         *p_grad.add(c) += g;
                     }
                     _ => {}
