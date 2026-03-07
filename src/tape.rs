@@ -237,7 +237,7 @@ pub fn new(n: usize) -> Self {
     }
 
     pub fn softmax(&mut self, out: &mut [usize], logits: &[usize]) {
-        let mut max_val = f32::MIN;
+        let mut max_val = DataT::MIN;
         for &idx in logits {
             if self.data[idx] > max_val { max_val = self.data[idx]; }
         }
@@ -283,6 +283,7 @@ pub fn new(n: usize) -> Self {
         }
     }
 
+    #[inline(never)]
     pub fn backward(&mut self, loss_idx: usize) {
         // Equivalent to std::memset(grad, 0, n * sizeof(grad_T))
         unsafe {

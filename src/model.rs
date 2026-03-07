@@ -1,6 +1,6 @@
-use std::f32;
 use crate::Matrix;
 use crate::Tape;
+use crate::DataT;
 use crate::PythonRandom;
 
 pub const MAX_VOCAB_SIZE: usize = 100;
@@ -64,7 +64,7 @@ impl Model {
         let mut init_matrix = |m: &mut Matrix| {
             m.data_start = tape.len();
             for _ in 0..(m.rows * m.cols) {
-                tape.push_const(rng.gauss(0.0, 0.08) as f32);
+                tape.push_const(rng.gauss(0.0, 0.08) as DataT);
             }
         };
 
@@ -106,7 +106,7 @@ impl Model {
         for i in 1..num_tokens {
             total_losses = tape.add(total_losses, losses[i]);
         }
-        let loss_idx = tape.mul_const(total_losses, 1.0 / (num_tokens as f32));
+        let loss_idx = tape.mul_const(total_losses, 1.0 / (num_tokens as DataT));
         loss_idx
     }
 
@@ -158,7 +158,7 @@ impl Model {
                     for j in 1..HEAD_DIM {
                         sum = tape.mul_add(q[hs + j], keys[i_layer][t][hs + j], sum);
                     }
-                    attention_logits[t] = tape.mul_const(sum, 1.0 / (HEAD_DIM as f32).sqrt());
+                    attention_logits[t] = tape.mul_const(sum, 1.0 / (HEAD_DIM as DataT).sqrt());
                 }
 
                 let mut attn_weights = [0usize; BLOCK_SIZE];

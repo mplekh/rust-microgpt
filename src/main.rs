@@ -56,8 +56,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Num params: {}", weights_end);
 
     let learning_rate = 0.01;
-    let beta1: f32 = 0.85;
-    let beta2: f32 = 0.99;
+    let beta1: DataT = 0.85;
+    let beta2: DataT = 0.99;
     let eps_adam = 1e-8;
 
     let mut m = vec![0.0; weights_end];
@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tape.backward(loss_idx);
 
         // Adam Optimizer
-        let lr_t = learning_rate * (1.0 - (step as f32 / NUM_STEPS as f32));
+        let lr_t = learning_rate * (1.0 - (step as DataT / NUM_STEPS as DataT));
         let beta1_pow = beta1.powi((step + 1) as i32);
         let beta2_pow = beta2.powi((step + 1) as i32);
 
@@ -135,7 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Convert tape indices to actual weight values for choices
             let mut weights = [0.0f32; MAX_VOCAB_SIZE];
             for i in 0..vocab_size {
-                weights[i] = tape.data[probs[i]];
+                weights[i] = tape.data[probs[i]] as f32;
             }
 
             token_id = rng.choices(&weights[..vocab_size], 1)[0];
