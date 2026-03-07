@@ -98,8 +98,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if (step + 1) % 10 == 0 {
             print!(
-                "Step {} / {} | loss {:.4} | beta1_pow {:.6} | beta2_pow {:.6}\r",
-                step + 1, NUM_STEPS, tape.data[loss_idx], beta1_pow, beta1_pow
+                "Step {} / {} | loss {:.4} | beta1_pow {:.6} | beta2_pow {:.6} \r",
+                step + 1, NUM_STEPS, tape.data[loss_idx], beta1_pow, beta2_pow
             );
             use std::io::Write;
             std::io::stdout().flush()?;

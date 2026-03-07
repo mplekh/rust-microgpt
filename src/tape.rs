@@ -1,8 +1,6 @@
-use std::f32;
 use std::ptr;
 
 pub type DataT = f32;
-pub type GradT = f32;
 
 pub struct Matrix {
     pub data_start: usize,
@@ -44,7 +42,7 @@ struct Children {
 
 pub struct Tape {
     pub data: Vec<DataT>,
-    pub grad: Vec<GradT>,
+    pub grad: Vec<DataT>,
     child: Vec<Children>,
     op: Vec<Op>,
     size: usize,
@@ -285,7 +283,7 @@ pub fn new(n: usize) -> Self {
 
     #[inline(never)]
     pub fn backward(&mut self, loss_idx: usize) {
-        // Equivalent to std::memset(grad, 0, n * sizeof(grad_T))
+        // Equivalent to memset
         unsafe {
             ptr::write_bytes(self.grad.as_mut_ptr(), 0, loss_idx + 1);
         }
